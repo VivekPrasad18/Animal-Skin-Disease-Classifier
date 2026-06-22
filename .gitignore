@@ -1,0 +1,15 @@
+# Ignore datasets
+dataset/
+
+# Ignore heavy model files everywhere
+*.h5
+*.pkl
+
+# Ignore environments and backups (CRITICAL)
+.venv/
+*.zip
+
+# Ignore VSCode settings and Jupyter caches
+.vscode/
+__pycache__/
+.ipynb_checkpoints/
