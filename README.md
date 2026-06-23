@@ -72,11 +72,11 @@ pip install -r requirements.txt
 
 2. Launching the System
 
-1. Initialize the Backend:
+ 1. Initialize the Backend:
 
-python api.py
+  python api.py
 
 
-2. Launch the User Interface:Open index.html in any standard web browser. The interface will automatically sync with the local FastAPI microservice.
+ 2. Launch the User Interface:Open index.html in any standard web browser. The interface will automatically sync with the local FastAPI microservice.
 
 Developed as a scalable AI/ML solution for clinical dermatological support.
