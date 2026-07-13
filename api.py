@@ -1,18 +1,27 @@
 import io
+import os
+import warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings('ignore')
+
 import numpy as np
+import joblib
+import cv2
 from PIL import Image
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import tensorflow as tf
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.applications.resnet50 import preprocess_input
 import uvicorn
 
 app = FastAPI(
-    title="Deep Learning Diagnostic Engine API",
-    description="REST API microservice for automated animal skin disease classification."
+    title="Dog Skin Disease Diagnostic Engine API",
+    description="Hybrid ResNet50 + SVM classifier for 6 dog skin diseases."
 )
 
-# Allow cross-origin requests (essential for microservices connecting to frontends)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,93 +30,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Teleport users automatically to the docs page so you don't have to type it!
+# Serve index.html at root
 @app.get("/", include_in_schema=False)
-async def redirect_to_docs():
-    return RedirectResponse(url="/docs")
+async def serve_frontend():
+    return FileResponse("index.html")
 
-print("Loading ResNet50 Diagnostic Model into memory...")
-try:
-    # We use the exact path found in your workspace
-    model = tf.keras.models.load_model("train/resnet_model.h5")
-    print("✅ Model loaded successfully!")
-except Exception as e:
-    print(f"⚠️ Warning: Could not load model. Ensure 'train/resnet_model.h5' exists. Error: {e}")
-    model = None
+# ── Load Models ───────────────────────────────────────────────────────────────
+print("Loading models...")
+resnet = ResNet50(weights='imagenet', include_top=False,
+                  pooling='avg', input_shape=(224, 224, 3))
+svm    = joblib.load("models/svm_model.pkl")
+scaler = joblib.load("models/scaler.pkl")
+print("Models loaded!")
 
-# TODO: Update these to match your exact 6 skin disease classes
+# Exact class order (alphabetical as Keras loads)
 CLASS_NAMES = [
-    "demodicosis",
-    "Dermatitis",
-    "Fungal_infections",
-    "Healthy",
-    "Hypersensitivity",
-    "ringworm"
+    'Dermatitis',
+    'Fungal Infections',
+    'Healthy',
+    'Hypersensitivity',
+    'Demodicosis',
+    'Ringworm'
 ]
 
-def preprocess_image(image_bytes: bytes):
-    """
-    Transforms raw uploaded image bytes into the exact mathematical tensor 
-    format expected by the ResNet50 architecture.
-    """
-    # Load image from bytes
-    image = Image.open(io.BytesIO(image_bytes))
-    
-    # Ensure it has 3 channels (RGB)
-    if image.mode != "RGB":
-        image = image.convert("RGB")
-        
-    # Resize to the standard ResNet50 input size
-    image = image.resize((300, 300))
-    img_array = np.array(image)
-    
-    # Expand dimensions to create a "batch" of 1 image
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    # Normalize pixel values between 0 and 1
-    img_array = img_array / 255.0  
-    
-    return img_array
+CLASS_INFO = {
+    'Dermatitis':        'Skin inflammation causing redness and itching.',
+    'Fungal Infections': 'Fungal infection with scaly or crusty patches.',
+    'Healthy':           'No disease detected. Skin appears normal.',
+    'Hypersensitivity':  'Allergic reaction causing intense itching.',
+    'Demodicosis':       'Demodex mite infection causing hair loss.',
+    'Ringworm':          'Circular bald patches with red border.'
+}
 
+# ── Predict Endpoint ──────────────────────────────────────────────────────────
 @app.post("/api/v1/diagnose")
 async def diagnose_image(file: UploadFile = File(...)):
-    """
-    Accepts an image file payload, runs it through the preprocessing pipeline, 
-    and returns a structured diagnostic prediction.
-    """
-    if model is None:
-        raise HTTPException(status_code=503, detail="The AI model is currently offline or failed to load.")
-    
     try:
-        # 1. Read the raw file stream
+        # Read image bytes
         image_bytes = await file.read()
-        
-        # 2. Preprocess the image
-        processed_image = preprocess_image(image_bytes)
-        
-        # 3. Run the Deep Learning prediction
-        predictions = model.predict(processed_image)
-        predicted_class_idx = np.argmax(predictions[0])
-        confidence_score = float(predictions[0][predicted_class_idx])
-        
-        # 4. Return a structured JSON response (Microservice standard)
+        pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        img_np  = np.array(pil_img)
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+        # Preprocess → ResNet50 features → scale → SVM predict
+        img_resized = cv2.resize(img_bgr, (224, 224))
+        inp = np.expand_dims(preprocess_input(img_resized.astype(np.float32)), 0)
+        feats = resnet.predict(inp, verbose=0)
+        feats = scaler.transform(feats)
+        proba = svm.predict_proba(feats)[0]
+
+        idx        = int(np.argmax(proba))
+        disease    = CLASS_NAMES[idx]
+        confidence = float(np.max(proba))
+
         return {
             "status": "success",
             "filename": file.filename,
             "diagnostics": {
-                "prediction_class": CLASS_NAMES[predicted_class_idx],
-                "confidence_score": round(confidence_score, 4),
-                "model_version": "ResNet50-v1.2",
-                "architecture": "Microservice API"
+                "prediction_class": disease,
+                "confidence_score": round(confidence, 4),
+                "description": CLASS_INFO[disease],
+                "model_version": "ResNet50+SVM-v2.0",
+                "architecture": "Hybrid CNN-SVM Pipeline",
+                "all_probabilities": {
+                    CLASS_NAMES[i]: round(float(proba[i]), 4)
+                    for i in range(len(CLASS_NAMES))
+                }
             }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process image: {str(e)}")
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 7860))
     print("\n" + "="*50)
-    print("🚀 API is running! Ctrl+Click the link below to test it:")
-    print("👉 http://127.0.0.1:8000 👈")
+    print(f"Server running at: http://0.0.0.0:{port}")
     print("="*50 + "\n")
-    # Changed host to 127.0.0.1 so it creates a valid link in your browser
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -1,15 +1,36 @@
-# Ignore datasets
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Dataset (too large for GitHub)
 dataset/
 
-# Ignore heavy model files everywhere
-*.h5
-*.pkl
+# Large model files - use Git LFS or upload separately
+models/*.h5
 
-# Ignore environments and backups (CRITICAL)
-.venv/
-*.zip
-
-# Ignore VSCode settings and Jupyter caches
-.vscode/
+# Python cache
 __pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Jupyter checkpoints
 .ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.zip
+AnimalDisease_Project.zip
+
+# Images not part of project
+*.jpeg
+*.JPEG
+WhatsApp*
